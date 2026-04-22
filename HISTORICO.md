@@ -61,7 +61,7 @@ Serviços ativos: `nut-driver@ragtech`, `nut-server`, `nut-monitor`, `ragtech-mo
 
 ---
 
-## Monitoramento do NAS (2026-04-22)
+## Monitoramento do NAS e alertas Telegram (2026-04-22)
 
 Adicionado monitoramento de disponibilidade do NAS em `ragtech_nut.py`:
 - Ping a cada 30s para `192.168.50.110`
