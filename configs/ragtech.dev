@@ -1,0 +1,8 @@
+battery.charge: 100
+battery.voltage: 13.8
+input.voltage: 220.0
+output.voltage: 120.0
+ups.load: 0
+ups.temperature: 25
+output.current: 0.0
+ups.status: OL

@@ -1,0 +1,12 @@
+[upsmon_local]
+    password = CHANGE_ME_LOCAL
+    upsmon primary
+
+[upsmon_nas]
+    password = CHANGE_ME_NAS
+    upsmon secondary
+
+[admin]
+    password = CHANGE_ME_ADMIN
+    actions = SET
+    instcmds = ALL

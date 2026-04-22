@@ -1,0 +1,14 @@
+[Unit]
+Description=Ragtech Easy Pro UPS Monitor (NUT bridge)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/ragtech-monitor/ragtech_nut.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
