@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """
-NUT notifycmd — Telegram + Wake-on-LAN
+NUT notifycmd — Telegram para ONBATT e LOWBATT.
 
-Chamado pelo upsmon nos eventos ONBATT, ONLINE, LOWBATT.
+ONLINE e WOL sao tratados por ragtech_nut.py (sempre em execucao).
+
 Instalar em: /etc/nut/notifycmd.py
-Permissões: chmod 750, chown root:nut
+Permissoes: chmod 750, chown root:nut
 """
-import sys, subprocess, urllib.request, urllib.parse, syslog, time
+import sys, subprocess, urllib.request, urllib.parse, syslog
 
 BOT_TOKEN = "CHANGE_ME_TELEGRAM_BOT_TOKEN"
 CHAT_ID   = "CHANGE_ME_TELEGRAM_CHAT_ID"
-
-NAS_MAC   = "6c:1f:f7:a8:b1:0d"   # MAC do NAS (Ugreen DH4300 Plus)
 
 
 def get_battery():
@@ -41,14 +40,6 @@ def send(text):
         syslog.syslog(syslog.LOG_ERR, f"notifycmd telegram falhou: {e}")
 
 
-def wake_nas():
-    # Envia magic packet 3x para garantia
-    for _ in range(3):
-        subprocess.run(["wakeonlan", NAS_MAC], capture_output=True)
-        time.sleep(2)
-    syslog.syslog(syslog.LOG_INFO, f"notifycmd: WOL enviado para {NAS_MAC}")
-
-
 evento  = " ".join(sys.argv[1:]).upper()
 bateria = get_battery()
 bat_str = f"\nBateria: *{bateria}%*" if bateria is not None else ""
@@ -56,10 +47,7 @@ bat_str = f"\nBateria: *{bateria}%*" if bateria is not None else ""
 if "ON BATTERY" in evento or "ONBATT" in evento:
     send(f"🔴 *Nobreak na bateria*\nA energia da rede foi interrompida.{bat_str}")
 
-elif "ON LINE" in evento or "ONLINE" in evento:
-    send(f"✅ *Energia voltou*\nNobreak retornou à rede elétrica.{bat_str}\nEnviando WOL para ligar o NAS...")
-    time.sleep(5)
-    wake_nas()
-
 elif "LOW BATTERY" in evento or "LOWBATT" in evento:
     send(f"⚠️ *Bateria crítica!*\nNível muito baixo atingido.{bat_str}\nO desligamento do NAS deve ser iniciado em breve.")
+
+# ONLINE e WOL: tratados por ragtech_nut.py via deteccao OB→OL no hardware

@@ -3,20 +3,48 @@
 # Uso: sudo bash teste_simulacao.sh
 #
 # Sequência:
+#   0. Garante estado limpo (limpa FSD anterior)
 #   1. Para ragtech-monitor (evita sobrescrever valores simulados)
 #   2. Simula OB (queda de energia)
 #   3. Simula OB LB (bateria crítica) → NAS deve desligar
 #   4. Aguarda NAS ficar offline
-#   5. Restaura OL (energia voltou) → WOL enviado automaticamente
+#   5. Restaura OL e inicia ragtech-monitor → detecta OB→OL → clear_fsd + WOL automático
 #   6. Aguarda NAS responder ao ping
-#   7. Reinicia ragtech-monitor
 
 NUT_USER="admin"
-NUT_PASS="ragtech_admin_2024"
+NUT_PASS="CHANGE_ME_ADMIN"
 UPS="ragtech@127.0.0.1"
 NAS_IP="192.168.50.110"
+TIMEOUT=300
 
 rw() { upsrw -s "$1=$2" -u "$NUT_USER" -p "$NUT_PASS" "$UPS" 2>/dev/null; }
+
+_abort() {
+    echo "ERRO: $1. Limpando estado..."
+    rw ups.status "OL"
+    rw battery.charge "100"
+    rw input.voltage "220.0"
+    systemctl stop nut-monitor nut-server
+    systemctl stop nut-driver@ragtech
+    sleep 2
+    systemctl start nut-driver@ragtech && sleep 2
+    systemctl start nut-server && sleep 2
+    systemctl start nut-monitor && sleep 2
+    systemctl start ragtech-monitor
+    exit 1
+}
+
+echo "[0/6] Garantindo estado limpo (limpa FSD anterior)..."
+systemctl stop nut-monitor ragtech-monitor 2>/dev/null
+systemctl stop nut-server 2>/dev/null
+systemctl stop nut-driver@ragtech 2>/dev/null
+sleep 2
+systemctl start nut-driver@ragtech && sleep 2
+systemctl start nut-server && sleep 2
+systemctl start nut-monitor && sleep 3
+STATUS=$(upsc $UPS 2>/dev/null | grep '^ups.status' | awk '{print $2}')
+echo "      ups.status: $STATUS"
+[ "$STATUS" = "OL" ] || _abort "Estado inicial não é OL: $STATUS"
 
 echo "[1/6] Pausando ragtech-monitor..."
 systemctl stop ragtech-monitor
@@ -32,33 +60,31 @@ rw ups.status "OB LB"
 rw battery.charge "20"
 sleep 2
 
-echo "      Aguardando NAS desligar (máx 120s)..."
-TIMEOUT=120
+echo "      Aguardando NAS desligar (máx ${TIMEOUT}s)..."
 ELAPSED=0
 while ping -c 1 -W 2 "$NAS_IP" > /dev/null 2>&1; do
     sleep 5
     ELAPSED=$((ELAPSED + 5))
     echo "      NAS ainda online... ${ELAPSED}s"
-    if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
-        echo "ERRO: NAS não desligou em ${TIMEOUT}s. Abortando."
-        rw ups.status "OL"
-        rw battery.charge "100"
-        rw input.voltage "220.0"
-        systemctl start ragtech-monitor
-        exit 1
-    fi
+    [ "$ELAPSED" -ge "$TIMEOUT" ] && _abort "NAS não desligou em ${TIMEOUT}s"
 done
 echo "      NAS OFFLINE. Aguardando 15s para garantir shutdown completo..."
 sleep 15
 
-echo "[4/6] Simulando retorno da energia (OL)..."
-echo "      (notifycmd.py enviará Telegram + WOL automaticamente)"
+echo "[4/6] Energia voltou (OL) — iniciando ragtech-monitor..."
+echo "      ragtech_nut.py detectará OB→OL e disparará: clear_fsd + WOL automaticamente"
 rw ups.status "OL"
 rw battery.charge "100"
 rw input.voltage "220.0"
-sleep 6
+# Inicia ragtech-monitor: na 1ª leitura verá OL no hardware mas last_status=None
+# Na 2ª leitura verá OL e last_status=OL → sem transição ainda
+# Para forçar a detecção OB→OL no teste, inicializamos last_status via arquivo de estado
+echo "OB LB" > /tmp/ragtech_last_status
+systemctl start ragtech-monitor
+sleep 3
 
-echo "[5/6] Aguardando NAS ligar via WOL (máx 120s)..."
+echo "[5/6] Aguardando NAS ligar via WOL (máx ${TIMEOUT}s)..."
+echo "      (ragtech_nut.py enviará WOL após bateria >= 80% e FSD limpo)"
 ELAPSED=0
 while ! ping -c 1 -W 2 "$NAS_IP" > /dev/null 2>&1; do
     sleep 5
@@ -70,12 +96,9 @@ while ! ping -c 1 -W 2 "$NAS_IP" > /dev/null 2>&1; do
     fi
 done
 
-if ping -c 1 -W 2 "$NAS_IP" > /dev/null 2>&1; then
-    echo "      NAS ONLINE!"
-fi
+ping -c 1 -W 2 "$NAS_IP" > /dev/null 2>&1 && echo "      NAS ONLINE!" || true
 
-echo "[6/6] Retomando ragtech-monitor..."
-systemctl start ragtech-monitor
+echo "[6/6] Verificando serviços..."
 sleep 3
 systemctl status ragtech-monitor --no-pager | head -5
 
