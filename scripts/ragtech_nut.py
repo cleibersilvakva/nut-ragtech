@@ -181,7 +181,7 @@ def measure_connection() -> dict:
     download_mbps, upload_mbps = 0.0, 0.0
     try:
         st = subprocess.run(
-            ["speedtest-cli", "--simple"],
+            ["python3", "-m", "speedtest", "--simple"],
             capture_output=True, text=True, timeout=120
         )
         for line in st.stdout.splitlines():
