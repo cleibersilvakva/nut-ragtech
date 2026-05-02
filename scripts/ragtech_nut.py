@@ -158,6 +158,53 @@ def check_internet_latency() -> tuple[bool, float]:
     return False, 0.0
 
 
+def measure_connection() -> dict:
+    """Retorna ping, TTL, perda, download e upload. Leva ~30s."""
+    result = subprocess.run(
+        ["ping", "-c", "5", "-W", "3", "8.8.8.8"],
+        capture_output=True, text=True
+    )
+    latency, ttl, perda = -1.0, 0, 100.0
+    for line in result.stdout.splitlines():
+        m = re.search(r"\bttl=(\d+)\b", line, re.IGNORECASE)
+        if m:
+            ttl = int(m.group(1))
+        if "packet loss" in line:
+            m = re.search(r"([\d.]+)%", line)
+            if m:
+                perda = float(m.group(1))
+        if "rtt" in line or "round-trip" in line:
+            m = re.search(r"= [\d.]+/([\d.]+)/", line)
+            if m:
+                latency = float(m.group(1))
+
+    download_mbps, upload_mbps = 0.0, 0.0
+    try:
+        st = subprocess.run(
+            ["speedtest-cli", "--simple"],
+            capture_output=True, text=True, timeout=120
+        )
+        for line in st.stdout.splitlines():
+            m = re.search(r"([\d.]+)\s*Mbit/s", line)
+            if not m:
+                continue
+            val = float(m.group(1))
+            if "Download" in line:
+                download_mbps = val
+            elif "Upload" in line:
+                upload_mbps = val
+    except Exception as exc:
+        log.warning("speedtest falhou: %s", exc)
+
+    return {
+        "latency": latency,
+        "ttl": ttl,
+        "perda": perda,
+        "download": download_mbps,
+        "upload": upload_mbps,
+    }
+
+
 def send_wol() -> None:
     for _ in range(3):
         subprocess.run(["wakeonlan", "-i", WOL_BROADCAST, NAS_MAC], capture_output=True)
@@ -259,22 +306,39 @@ def handle_nut_command() -> None:
 
 
 def handle_net_command() -> None:
-    online, latency = check_internet_latency()
-    if online:
-        if latency < 20:
-            emoji, qualidade = "🟢", "Excelente"
-        elif latency < 60:
-            emoji, qualidade = "🟡", "Boa"
-        else:
-            emoji, qualidade = "🟠", "Alta latência"
-        send_telegram(
-            f"{emoji} *Internet — Online*\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"Ping:      *{latency:.1f} ms*\n"
-            f"Qualidade: *{qualidade}*"
-        )
+    send_telegram("⏳ *Medindo conexão...* Aguarde ~30s")
+    m = measure_connection()
+
+    lat, ttl, perda = m["latency"], m["ttl"], m["perda"]
+    down, up = m["download"], m["upload"]
+
+    if perda >= 90 or lat < 0:
+        emoji, qualidade = "🔴", "Offline"
+    elif perda >= 30 or lat > 200:
+        emoji, qualidade = "🟠", "Degradada"
+    elif down >= 100 and lat < 50:
+        emoji, qualidade = "🟢", "Excelente"
+    elif down >= 20 or lat < 100:
+        emoji, qualidade = "🟡", "Boa"
     else:
-        send_telegram("🔴 *Internet — Offline*\nSem resposta de 8.8.8.8 e 1.1.1.1")
+        emoji, qualidade = "🟠", "Baixa velocidade"
+
+    lat_s  = f"*{lat:.1f} ms*"  if lat  >= 0   else "N/A"
+    ttl_s  = f"*{ttl}*"         if ttl  > 0    else "N/A"
+    down_s = f"*{down:.1f} Mbps*" if down > 0  else "N/A"
+    up_s   = f"*{up:.1f} Mbps*"   if up   > 0  else "N/A"
+
+    send_telegram(
+        f"{emoji} *Internet — {qualidade}*\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"⬇️ Download:  {down_s}\n"
+        f"⬆️ Upload:    {up_s}\n"
+        f"⏱️ Ping:      {lat_s}\n"
+        f"📦 TTL:       {ttl_s}\n"
+        f"📡 Perda:     *{perda:.0f}%*\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"Contratado:  *1000 Mbps* (fibra)"
+    )
 
 
 def telegram_command_loop() -> None:
