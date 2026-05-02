@@ -180,11 +180,23 @@ def measure_connection() -> dict:
 
     download_mbps, upload_mbps = 0.0, 0.0
     try:
-        import speedtest as _st
-        s = _st.Speedtest(secure=True)
-        s.get_best_server()
-        download_mbps = round(s.download() / 1_000_000, 1)
-        upload_mbps   = round(s.upload()   / 1_000_000, 1)
+        import os as _os
+        _env = {**_os.environ, "HOME": "/home/cleibersilva"}
+        st = subprocess.run(
+            ["/home/cleibersilva/.local/bin/speedtest-cli", "--simple"],
+            capture_output=True, text=True, timeout=120, env=_env,
+        )
+        log.info("speedtest rc=%d stdout=%s stderr=%s",
+                 st.returncode, repr(st.stdout[:100]), repr(st.stderr[:100]))
+        for line in st.stdout.splitlines():
+            m = re.search(r"([\d.]+)\s*Mbit/s", line)
+            if not m:
+                continue
+            val = float(m.group(1))
+            if "Download" in line:
+                download_mbps = val
+            elif "Upload" in line:
+                upload_mbps = val
         log.info("Speedtest: down=%.1f up=%.1f", download_mbps, upload_mbps)
     except Exception as exc:
         log.warning("speedtest falhou: %s", exc)
