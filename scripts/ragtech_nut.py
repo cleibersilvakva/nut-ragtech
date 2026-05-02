@@ -180,19 +180,12 @@ def measure_connection() -> dict:
 
     download_mbps, upload_mbps = 0.0, 0.0
     try:
-        st = subprocess.run(
-            ["python3", "-m", "speedtest", "--simple"],
-            capture_output=True, text=True, timeout=120
-        )
-        for line in st.stdout.splitlines():
-            m = re.search(r"([\d.]+)\s*Mbit/s", line)
-            if not m:
-                continue
-            val = float(m.group(1))
-            if "Download" in line:
-                download_mbps = val
-            elif "Upload" in line:
-                upload_mbps = val
+        import speedtest as _st
+        s = _st.Speedtest(secure=True)
+        s.get_best_server()
+        download_mbps = round(s.download() / 1_000_000, 1)
+        upload_mbps   = round(s.upload()   / 1_000_000, 1)
+        log.info("Speedtest: down=%.1f up=%.1f", download_mbps, upload_mbps)
     except Exception as exc:
         log.warning("speedtest falhou: %s", exc)
 
@@ -305,10 +298,8 @@ def handle_nut_command() -> None:
     )
 
 
-def handle_net_command() -> None:
-    send_telegram("⏳ *Medindo conexão...* Aguarde ~30s")
+def _net_worker() -> None:
     m = measure_connection()
-
     lat, ttl, perda = m["latency"], m["ttl"], m["perda"]
     down, up = m["download"], m["upload"]
 
@@ -323,10 +314,10 @@ def handle_net_command() -> None:
     else:
         emoji, qualidade = "🟠", "Baixa velocidade"
 
-    lat_s  = f"*{lat:.1f} ms*"  if lat  >= 0   else "N/A"
-    ttl_s  = f"*{ttl}*"         if ttl  > 0    else "N/A"
-    down_s = f"*{down:.1f} Mbps*" if down > 0  else "N/A"
-    up_s   = f"*{up:.1f} Mbps*"   if up   > 0  else "N/A"
+    lat_s  = f"*{lat:.1f} ms*"    if lat  >= 0 else "N/A"
+    ttl_s  = f"*{ttl}*"           if ttl  >  0 else "N/A"
+    down_s = f"*{down:.1f} Mbps*" if down >  0 else "N/A"
+    up_s   = f"*{up:.1f} Mbps*"   if up   >  0 else "N/A"
 
     send_telegram(
         f"{emoji} *Internet — {qualidade}*\n"
@@ -339,6 +330,11 @@ def handle_net_command() -> None:
         f"━━━━━━━━━━━━━━━━━━\n"
         f"Contratado:  *1000 Mbps* (fibra)"
     )
+
+
+def handle_net_command() -> None:
+    send_telegram("⏳ *Medindo conexão...* Aguarde ~30s")
+    threading.Thread(target=_net_worker, daemon=True).start()
 
 
 def telegram_command_loop() -> None:
