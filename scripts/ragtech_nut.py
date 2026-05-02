@@ -10,6 +10,8 @@ Tambem detecta transicoes OB→OL e dispara a sequencia de recuperacao:
 
 Instalar em: /opt/ragtech-monitor/ragtech_nut.py
 """
+import json
+import re
 import serial
 import subprocess
 import threading
@@ -24,16 +26,17 @@ CMD           = bytes.fromhex("AA0400801E9E")
 POLL_SEC      = 5
 UPS_NAME      = "ragtech@127.0.0.1"
 NUT_USER      = "admin"
-NUT_PASS      = "CHANGE_ME_ADMIN"
+NUT_PASS      = "ragtech_admin_2024"
 
-BOT_TOKEN     = "CHANGE_ME_TELEGRAM_BOT_TOKEN"
-CHAT_ID       = "CHANGE_ME_TELEGRAM_CHAT_ID"
+BOT_TOKEN     = "8469193508:AAFoFGamn4SeITRGy-u3_iS5C7x54Q0Vxe4"
+CHAT_ID       = "915551687"
 NAS_MAC       = "6c:1f:f7:a8:b1:0d"
 WOL_BROADCAST     = "192.168.50.255"
 WOL_MIN_BAT       = 80
 STATE_FILE        = "/tmp/ragtech_last_status"
 NAS_IP            = "192.168.50.110"
-NAS_CHECK_INTERVAL = 30  # segundos entre pings ao NAS
+NAS_CHECK_INTERVAL = 30
+INTERNET_HOSTS    = ["8.8.8.8", "1.1.1.1"]
 
 logging.basicConfig(
     level=logging.INFO,
@@ -43,6 +46,19 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 _recovery_lock = threading.Lock()
+_ups_data_lock = threading.Lock()
+_last_ups_data: dict | None = None
+
+
+def get_cached_ups() -> dict | None:
+    with _ups_data_lock:
+        return _last_ups_data.copy() if _last_ups_data else None
+
+
+def set_cached_ups(data: dict) -> None:
+    global _last_ups_data
+    with _ups_data_lock:
+        _last_ups_data = data
 
 
 def read_ups() -> dict | None:
@@ -54,7 +70,8 @@ def read_ups() -> dict | None:
         resp = s.read(64)
         s.close()
 
-        if len(resp) < 31 or resp[0] != 0xAA:
+        # Protocolo retorna 30 ou 31 bytes; 0x1E (output_v) so existe em 31+
+        if len(resp) < 30 or resp[0] != 0xAA:
             log.warning("Resposta invalida: %s", resp.hex())
             return None
 
@@ -64,7 +81,7 @@ def read_ups() -> dict | None:
         current_a   = round(resp[0x0D] * 0.1152, 1)
         load_pct    = resp[0x0E]
         temp_c      = resp[0x0F]
-        output_v    = round(resp[0x1E] * 0.555,  1)
+        output_v    = round(resp[0x1E] * 0.555,  1) if len(resp) > 0x1E else 0.0
 
         on_battery  = input_v < 50.0
         low_battery = battery_pct < 25
@@ -128,6 +145,19 @@ def ping_nas() -> bool:
     return result.returncode == 0
 
 
+def check_internet_latency() -> tuple[bool, float]:
+    for host in INTERNET_HOSTS:
+        result = subprocess.run(
+            ["ping", "-c", "3", "-W", "3", host],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0:
+            m = re.search(r"rtt min/avg/max/mdev = [\d.]+/([\d.]+)/", result.stdout)
+            avg = float(m.group(1)) if m else 0.0
+            return True, avg
+    return False, 0.0
+
+
 def send_wol() -> None:
     for _ in range(3):
         subprocess.run(["wakeonlan", "-i", WOL_BROADCAST, NAS_MAC], capture_output=True)
@@ -160,7 +190,6 @@ def power_restored_sequence() -> None:
             f"Aguardando bateria ≥ {WOL_MIN_BAT}% para ligar o NAS..."
         )
 
-        # Aguarda bateria atingir WOL_MIN_BAT
         bat = 0
         for _ in range(120):  # max 120 iteracoes de 60s = 2h
             data = read_ups()
@@ -172,10 +201,8 @@ def power_restored_sequence() -> None:
                     break
             time.sleep(60)
 
-        # Limpa FSD e reinicia stack NUT
         clear_fsd()
 
-        # Liga o NAS via WOL
         log.info("Enviando WOL para NAS (bateria: %d%%)", bat)
         send_telegram(
             f"🔌 *Ligando NAS via WOL*\nBateria em *{bat}%*. Enviando magic packet..."
@@ -199,11 +226,102 @@ def save_last_status(status: str) -> None:
         log.warning("Nao foi possivel salvar estado: %s", exc)
 
 
+# ---------------------------------------------------------------------------
+# Handlers de comandos Telegram (#nut / #net)
+# ---------------------------------------------------------------------------
+
+def handle_nut_command() -> None:
+    data = get_cached_ups()
+    if not data:
+        send_telegram("⚠️ *Nobreak* — falha na leitura do dispositivo")
+        return
+    status = data["ups.status"]
+    if status == "OL":
+        emoji = "🟢"
+        status_text = "Na rede elétrica"
+    elif "LB" in status:
+        emoji = "🔴"
+        status_text = "Bateria fraca"
+    else:
+        emoji = "🟡"
+        status_text = "Na bateria"
+    send_telegram(
+        f"{emoji} *Nobreak — Status Atual*\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"Status:   *{status_text}* (`{status}`)\n"
+        f"Bateria:  *{data['battery.charge']}%* ({data['battery.voltage']}V)\n"
+        f"Entrada:  *{data['input.voltage']}V*\n"
+        f"Saída:    *{data['output.voltage']}V*\n"
+        f"Carga:    *{data['ups.load']}%*\n"
+        f"Corrente: *{data['output.current']}A*\n"
+        f"Temp:     *{data['ups.temperature']}°C*"
+    )
+
+
+def handle_net_command() -> None:
+    online, latency = check_internet_latency()
+    if online:
+        if latency < 20:
+            emoji, qualidade = "🟢", "Excelente"
+        elif latency < 60:
+            emoji, qualidade = "🟡", "Boa"
+        else:
+            emoji, qualidade = "🟠", "Alta latência"
+        send_telegram(
+            f"{emoji} *Internet — Online*\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"Ping:      *{latency:.1f} ms*\n"
+            f"Qualidade: *{qualidade}*"
+        )
+    else:
+        send_telegram("🔴 *Internet — Offline*\nSem resposta de 8.8.8.8 e 1.1.1.1")
+
+
+def telegram_command_loop() -> None:
+    offset = None
+    log.info("Telegram command loop iniciado")
+    while True:
+        try:
+            params: dict = {"timeout": 30, "allowed_updates": ["message"]}
+            if offset is not None:
+                params["offset"] = offset
+            url = (
+                f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?"
+                + urllib.parse.urlencode(params)
+            )
+            resp = urllib.request.urlopen(url, timeout=35)
+            updates = json.loads(resp.read()).get("result", [])
+            for update in updates:
+                offset = update["update_id"] + 1
+                msg = update.get("message", {})
+                text = msg.get("text", "").strip()
+                chat_id = str(msg.get("chat", {}).get("id", ""))
+                if chat_id != CHAT_ID:
+                    continue
+                log.info("Comando recebido: %s", text)
+                if text == "#nut":
+                    handle_nut_command()
+                elif text == "#net":
+                    handle_net_command()
+        except Exception as exc:
+            log.warning("Telegram polling erro: %s", exc)
+            time.sleep(10)
+
+
+# ---------------------------------------------------------------------------
+# Loop principal
+# ---------------------------------------------------------------------------
+
 def main() -> None:
     log.info("Iniciando monitor Ragtech Easy Pro -> %s", UPS_NAME)
+
+    cmd_thread = threading.Thread(target=telegram_command_loop, daemon=True)
+    cmd_thread.start()
+
     last_status = load_last_status()
     if last_status:
         log.info("Estado anterior carregado: %s", last_status)
+
     recovery_thread = None
     last_nas_online = None
     nas_check_counter = 0
@@ -211,6 +329,7 @@ def main() -> None:
     while True:
         data = read_ups()
         if data:
+            set_cached_ups(data)
             push_to_nut(data)
             status = data["ups.status"]
 
@@ -223,7 +342,6 @@ def main() -> None:
                     data["ups.load"],
                 )
 
-                # Detecta transicao OB→OL (energia voltou)
                 if (last_status is not None
                         and "OB" in last_status
                         and "OB" not in status):
@@ -244,7 +362,7 @@ def main() -> None:
             nas_check_counter = 0
             nas_online = ping_nas()
             if last_nas_online is None:
-                last_nas_online = nas_online  # inicializa sem notificar
+                last_nas_online = nas_online
             elif nas_online != last_nas_online:
                 if nas_online:
                     log.info("NAS voltou online")
