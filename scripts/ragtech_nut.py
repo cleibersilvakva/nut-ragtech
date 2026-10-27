@@ -11,6 +11,7 @@ Tambem detecta transicoes OB→OL e dispara a sequencia de recuperacao:
 Instalar em: /opt/ragtech-monitor/ragtech_nut.py
 """
 import json
+from raspberry_lifecycle import NasMonitor, boot_notification_loop
 import re
 import serial
 import subprocess
@@ -121,20 +122,22 @@ def push_to_nut(data: dict) -> None:
         upsrw(key, value)
 
 
-def send_telegram(text: str) -> None:
-    payload = urllib.parse.urlencode({
-        "chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"
-    }).encode()
+def send_telegram(text: str, parse_mode="Markdown") -> bool:
+    params = {"chat_id": CHAT_ID, "text": text}
+    if parse_mode:
+        params["parse_mode"] = parse_mode
+    payload = urllib.parse.urlencode(params).encode()
     try:
-        urllib.request.urlopen(
+        with urllib.request.urlopen(
             urllib.request.Request(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-                data=payload,
-            ),
-            timeout=10,
-        )
-    except Exception as exc:
-        log.warning("Telegram falhou: %s", exc)
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data=payload,
+            ), timeout=10,
+        ) as response:
+            return bool(json.loads(response.read()).get("ok"))
+    except Exception:
+        # Do not log URLs or exceptions containing the Telegram token.
+        log.warning("Telegram falhou; mensagem nao confirmada")
+        return False
 
 
 def ping_nas() -> bool:
@@ -387,6 +390,11 @@ def telegram_command_loop() -> None:
 def main() -> None:
     log.info("Iniciando monitor Ragtech Easy Pro -> %s", UPS_NAME)
 
+    threading.Thread(
+        target=boot_notification_loop,
+        args=(lambda text: send_telegram(text, parse_mode=None),), daemon=True,
+    ).start()
+
     cmd_thread = threading.Thread(target=telegram_command_loop, daemon=True)
     cmd_thread.start()
 
@@ -395,7 +403,7 @@ def main() -> None:
         log.info("Estado anterior carregado: %s", last_status)
 
     recovery_thread = None
-    last_nas_online = None
+    nas_monitor = NasMonitor()
     nas_check_counter = 0
 
     while True:
@@ -432,17 +440,10 @@ def main() -> None:
         nas_check_counter += POLL_SEC
         if nas_check_counter >= NAS_CHECK_INTERVAL:
             nas_check_counter = 0
-            nas_online = ping_nas()
-            if last_nas_online is None:
-                last_nas_online = nas_online
-            elif nas_online != last_nas_online:
-                if nas_online:
-                    log.info("NAS voltou online")
-                    send_telegram("✅ *NAS online*\nO NAS voltou a responder na rede.")
-                else:
-                    log.warning("NAS ficou offline")
-                    send_telegram("🔴 *NAS offline*\nO NAS parou de responder ao ping.")
-                last_nas_online = nas_online
+            message = nas_monitor.observe(ping_nas())
+            if message:
+                log.info("Mudanca confirmada na acessibilidade do NAS")
+                send_telegram(message)
 
         time.sleep(POLL_SEC)
 
