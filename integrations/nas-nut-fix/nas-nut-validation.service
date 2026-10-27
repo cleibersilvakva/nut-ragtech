@@ -1,0 +1,10 @@
+[Unit]
+Description=Explicit real poweroff validation against isolated synthetic UPS
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/nas-nut-client/validation_guard.py --real-poweroff
+ExecStopPost=/usr/bin/python3 /opt/nas-nut-client/validation_guard.py --restore-only
+TimeoutStartSec=90
+TimeoutStopSec=40

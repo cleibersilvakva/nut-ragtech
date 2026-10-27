@@ -1,0 +1,5 @@
+#!/bin/sh
+case "${SSH_ORIGINAL_COMMAND-}" in
+    status|suspend) exec /usr/bin/sudo -n /usr/local/libexec/macmini-power-control "$SSH_ORIGINAL_COMMAND" ;;
+    *) echo 'Only status and suspend are allowed.' >&2; exit 126 ;;
+esac

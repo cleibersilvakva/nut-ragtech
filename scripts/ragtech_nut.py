@@ -11,6 +11,13 @@ Tambem detecta transicoes OB→OL e dispara a sequencia de recuperacao:
 Instalar em: /opt/ragtech-monitor/ragtech_nut.py
 """
 import json
+import os as _credentials_os
+from pathlib import Path as _CredentialsPath
+_credentials = json.loads(_CredentialsPath(_credentials_os.environ.get("RAGTECH_CREDENTIALS_FILE", "/etc/ragtech-monitor/credentials.json")).read_text())
+from nas_recovery import record_critical, recover
+import sys as _power_sys
+_power_sys.path.insert(0, "/opt/macmini-ups-power")
+from daemon import publish_sample
 from raspberry_lifecycle import NasMonitor, boot_notification_loop
 import re
 import serial
@@ -27,10 +34,10 @@ CMD           = bytes.fromhex("AA0400801E9E")
 POLL_SEC      = 5
 UPS_NAME      = "ragtech@127.0.0.1"
 NUT_USER      = "admin"
-NUT_PASS      = "ragtech_admin_2024"
+NUT_PASS = _credentials['nut_pass']
 
-BOT_TOKEN     = "8469193508:AAFoFGamn4SeITRGy-u3_iS5C7x54Q0Vxe4"
-CHAT_ID       = "915551687"
+BOT_TOKEN = _credentials['bot_token']
+CHAT_ID = _credentials['chat_id']
 NAS_MAC       = "6c:1f:f7:a8:b1:0d"
 WOL_BROADCAST     = "192.168.50.255"
 WOL_MIN_BAT       = 80
@@ -85,7 +92,7 @@ def read_ups() -> dict | None:
         output_v    = round(resp[0x1E] * 0.555,  1) if len(resp) > 0x1E else 0.0
 
         on_battery  = input_v < 50.0
-        low_battery = battery_pct < 25
+        low_battery = battery_pct <= 83
 
         status = "OB" if on_battery else "OL"
         if on_battery and low_battery:
@@ -162,55 +169,8 @@ def check_internet_latency() -> tuple[bool, float]:
 
 
 def measure_connection() -> dict:
-    """Retorna ping, TTL, perda, download e upload. Leva ~30s."""
-    result = subprocess.run(
-        ["ping", "-c", "5", "-W", "3", "8.8.8.8"],
-        capture_output=True, text=True
-    )
-    latency, ttl, perda = -1.0, 0, 100.0
-    for line in result.stdout.splitlines():
-        m = re.search(r"\bttl=(\d+)\b", line, re.IGNORECASE)
-        if m:
-            ttl = int(m.group(1))
-        if "packet loss" in line:
-            m = re.search(r"([\d.]+)%", line)
-            if m:
-                perda = float(m.group(1))
-        if "rtt" in line or "round-trip" in line:
-            m = re.search(r"= [\d.]+/([\d.]+)/", line)
-            if m:
-                latency = float(m.group(1))
-
-    download_mbps, upload_mbps = 0.0, 0.0
-    try:
-        import os as _os
-        _env = {**_os.environ, "HOME": "/home/cleibersilva"}
-        st = subprocess.run(
-            ["/home/cleibersilva/.local/bin/speedtest-cli", "--simple"],
-            capture_output=True, text=True, timeout=120, env=_env,
-        )
-        log.info("speedtest rc=%d stdout=%s stderr=%s",
-                 st.returncode, repr(st.stdout[:100]), repr(st.stderr[:100]))
-        for line in st.stdout.splitlines():
-            m = re.search(r"([\d.]+)\s*Mbit/s", line)
-            if not m:
-                continue
-            val = float(m.group(1))
-            if "Download" in line:
-                download_mbps = val
-            elif "Upload" in line:
-                upload_mbps = val
-        log.info("Speedtest: down=%.1f up=%.1f", download_mbps, upload_mbps)
-    except Exception as exc:
-        log.warning("speedtest falhou: %s", exc)
-
-    return {
-        "latency": latency,
-        "ttl": ttl,
-        "perda": perda,
-        "download": download_mbps,
-        "upload": upload_mbps,
-    }
+    from macmini_speedtest_client import measure
+    return measure()
 
 
 def send_wol() -> None:
@@ -220,49 +180,44 @@ def send_wol() -> None:
     log.info("WOL enviado para %s via %s", NAS_MAC, WOL_BROADCAST)
 
 
-def clear_fsd() -> None:
-    """Reinicia a stack NUT para limpar o flag FSD do dummy-ups."""
-    log.info("Limpando FSD — reiniciando stack NUT...")
-    for svc in ["nut-monitor", "nut-server"]:
-        subprocess.run(["systemctl", "stop", svc], capture_output=True)
-    subprocess.run(["systemctl", "stop", "nut-driver@ragtech"], capture_output=True)
-    time.sleep(2)
-    subprocess.run(["systemctl", "start", "nut-driver@ragtech"], capture_output=True)
-    time.sleep(2)
-    subprocess.run(["systemctl", "start", "nut-server"], capture_output=True)
-    time.sleep(2)
-    subprocess.run(["systemctl", "start", "nut-monitor"], capture_output=True)
-    time.sleep(3)
-    log.info("Stack NUT reiniciada — FSD limpo")
+def clear_fsd() -> bool:
+    def status():
+        result = subprocess.run(["upsc", UPS_NAME, "ups.status"],capture_output=True,text=True,timeout=5)
+        return result.stdout.split() if result.returncode == 0 else []
+    current = status()
+    if "OL" in current and "FSD" not in current:
+        return True
+    try:
+        for service in ["nut-monitor","nut-server","nut-driver@ragtech"]:
+            subprocess.run(["systemctl","stop",service],check=True,capture_output=True,timeout=20)
+        for service in ["nut-driver@ragtech","nut-server","nut-monitor"]:
+            subprocess.run(["systemctl","start",service],check=True,capture_output=True,timeout=20)
+            time.sleep(2)
+        for _ in range(10):
+            current = status()
+            if "OL" in current and "FSD" not in current:
+                return True
+            time.sleep(1)
+    except Exception:
+        log.exception("Falha ao recuperar pilha NUT")
+    return False
 
 
 def power_restored_sequence() -> None:
-    """Executado em thread separada quando energia volta (OB→OL)."""
     with _recovery_lock:
-        log.info("Energia voltou — iniciando sequencia de recuperacao")
-        send_telegram(
-            f"✅ *Energia voltou*\nNobreak retornou à rede elétrica.\n"
-            f"Aguardando bateria ≥ {WOL_MIN_BAT}% para ligar o NAS..."
-        )
-
-        bat = 0
-        for _ in range(120):  # max 120 iteracoes de 60s = 2h
-            data = read_ups()
-            if data:
-                push_to_nut(data)
-                bat = int(data["battery.charge"])
-                log.info("Aguardando bateria: %d%%/%d%%", bat, WOL_MIN_BAT)
-                if bat >= WOL_MIN_BAT:
-                    break
-            time.sleep(60)
-
-        clear_fsd()
-
-        log.info("Enviando WOL para NAS (bateria: %d%%)", bat)
-        send_telegram(
-            f"🔌 *Ligando NAS via WOL*\nBateria em *{bat}%*. Enviando magic packet..."
-        )
-        send_wol()
+        from pathlib import Path
+        def sample():
+            try:
+                return json.loads(Path("/run/ragtech-power/sample.json").read_text())
+            except (OSError,ValueError):
+                return None
+        def gateway():
+            return subprocess.run(["ping","-c","1","-W","1","192.168.50.1"],capture_output=True).returncode == 0
+        def fsd():
+            result = subprocess.run(["upsc",UPS_NAME,"ups.status"],capture_output=True,text=True,timeout=5)
+            return result.returncode == 0 and "FSD" in result.stdout.split()
+        recover(sample,ping_nas,gateway,clear_fsd,send_wol,
+                lambda text: send_telegram(text,parse_mode=None),fsd)
 
 
 def load_last_status() -> str | None:
@@ -314,41 +269,31 @@ def handle_nut_command() -> None:
 
 
 def _net_worker() -> None:
-    m = measure_connection()
-    lat, ttl, perda = m["latency"], m["ttl"], m["perda"]
-    down, up = m["download"], m["upload"]
-
-    if perda >= 90 or lat < 0:
-        emoji, qualidade = "🔴", "Offline"
-    elif perda >= 30 or lat > 200:
-        emoji, qualidade = "🟠", "Degradada"
-    elif down >= 100 and lat < 50:
-        emoji, qualidade = "🟢", "Excelente"
-    elif down >= 20 or lat < 100:
-        emoji, qualidade = "🟡", "Boa"
-    else:
-        emoji, qualidade = "🟠", "Baixa velocidade"
-
-    lat_s  = f"*{lat:.1f} ms*"    if lat  >= 0 else "N/A"
-    ttl_s  = f"*{ttl}*"           if ttl  >  0 else "N/A"
-    down_s = f"*{down:.1f} Mbps*" if down >  0 else "N/A"
-    up_s   = f"*{up:.1f} Mbps*"   if up   >  0 else "N/A"
-
-    send_telegram(
-        f"{emoji} *Internet — {qualidade}*\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"⬇️ Download:  {down_s}\n"
-        f"⬆️ Upload:    {up_s}\n"
-        f"⏱️ Ping:      {lat_s}\n"
-        f"📦 TTL:       {ttl_s}\n"
-        f"📡 Perda:     *{perda:.0f}%*\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"Contratado:  *1000 Mbps* (fibra)"
+    try:
+        m = measure_connection()
+    except Exception:
+        send_telegram("⚠️ Medição no Mac mini indisponível. Verifique API e Ethernet; nenhum teste local no Raspberry foi usado.", parse_mode=None)
+        return
+    loss = m.get('packet_loss_pct')
+    loss_text = f"{loss:.1f}%" if loss is not None else "não informado pelo servidor"
+    server = m['server']
+    text = (
+        "📶 Internet de casa — Mac mini\n"
+        "Origem: Mac mini / Ethernet gigabit / ASUS\n"
+        f"Download: {m['download_mbps']:.1f} Mbps\n"
+        f"Upload: {m['upload_mbps']:.1f} Mbps\n"
+        f"Ping: {m['ping_ms']:.1f} ms\n"
+        f"Jitter: {m['jitter_ms']:.2f} ms\n"
+        f"Perda: {loss_text}\n"
+        f"Servidor: {server['name']} — {server['location']}\n"
+        f"Medição (UTC): {m['measured_at']}\n"
+        "Plano informado: 1000 Mbps. Medição recente pode ser reutilizada por até 10 min."
     )
+    send_telegram(text, parse_mode=None)
 
 
 def handle_net_command() -> None:
-    send_telegram("⏳ *Medindo conexão...* Aguarde ~30s")
+    send_telegram("⏳ *Consultando medição no Mac mini...* Aguarde até 3 minutos")
     threading.Thread(target=_net_worker, daemon=True).start()
 
 
@@ -402,7 +347,8 @@ def main() -> None:
     if last_status:
         log.info("Estado anterior carregado: %s", last_status)
 
-    recovery_thread = None
+    recovery_thread = threading.Thread(target=power_restored_sequence, daemon=True)
+    recovery_thread.start()
     nas_monitor = NasMonitor()
     nas_check_counter = 0
 
@@ -410,6 +356,8 @@ def main() -> None:
         data = read_ups()
         if data:
             set_cached_ups(data)
+            publish_sample(data)
+            record_critical(data)
             push_to_nut(data)
             status = data["ups.status"]
 

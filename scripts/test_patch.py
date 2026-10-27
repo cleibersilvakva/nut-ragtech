@@ -1,3 +1,4 @@
+import os, json, tempfile
 import ast
 import importlib.util
 from pathlib import Path
@@ -25,8 +26,11 @@ class PatchTests(unittest.TestCase):
             new = next(n for n in new_tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
             self.assertEqual(ast.dump(old), ast.dump(new))
         namespace = {'__name__': 'monitor_test'}
-        with patch.dict(sys.modules, {'serial': types.ModuleType('serial')}):
-            exec(compile(updated, '<patched-monitor>', 'exec'), namespace)
+        with tempfile.TemporaryDirectory() as d:
+            credentials = Path(d) / 'credentials.json'
+            credentials.write_text(json.dumps({'nut_pass':'test','bot_token':'test','chat_id':'test'}))
+            with patch.dict(os.environ, {'RAGTECH_CREDENTIALS_FILE':str(credentials)}), patch.dict(sys.modules, {'serial': types.ModuleType('serial')}), patch.dict(sys.modules, {'daemon':types.SimpleNamespace(publish_sample=lambda data:None)}):
+                exec(compile(updated, '<patched-monitor>', 'exec'), namespace)
         response = MagicMock()
         response.__enter__.return_value.read.return_value = b'{"ok":true}'
         with patch.object(namespace['urllib'].request, 'urlopen', return_value=response) as request:
@@ -42,4 +46,4 @@ class PatchTests(unittest.TestCase):
         with patch.object(namespace['threading'], 'Thread') as thread, patch.object(namespace['time'], 'sleep', side_effect=InterruptedError):
             with self.assertRaises(InterruptedError):
                 namespace['main']()
-            self.assertEqual(thread.call_count, 2)
+            self.assertEqual(thread.call_count, 3)

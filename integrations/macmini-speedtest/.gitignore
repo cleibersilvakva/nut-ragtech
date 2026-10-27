@@ -1,0 +1,7 @@
+__pycache__/
+data/
+config.json
+*.token
+bin/speedtest
+bin/librespeed-cli
+.venv/

@@ -1,2 +1,14 @@
 # Arquivo real com senhas NUT — use configs/upsd.users.example como template
 configs/upsd.users
+
+# Runtime credentials and device state
+**/credential.json
+**/credentials.json
+**/config.json
+**/api.token
+**/known_hosts
+**/raspberry-power.pub
+**/__pycache__/
+**/data/
+*.pyc
+*.log

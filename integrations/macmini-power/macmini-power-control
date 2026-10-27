@@ -1,0 +1,16 @@
+#!/usr/bin/python3
+"""Root-owned helper; allow only status and delayed suspend."""
+import json
+import subprocess
+import sys
+from pathlib import Path
+if len(sys.argv)!=2 or sys.argv[1] not in ('status','suspend'):
+    raise SystemExit('Unsupported operation')
+if sys.argv[1]=='status':
+    print(json.dumps({'boot_id':Path('/proc/sys/kernel/random/boot_id').read_text().strip(),'awake':True}))
+else:
+    active=subprocess.run(['systemctl','is-active','--quiet','macmini-ups-suspend.timer']).returncode==0
+    if not active:
+        subprocess.run(['systemd-run','--quiet','--collect','--unit=macmini-ups-suspend','--on-active=8s',
+                        '--timer-property=AccuracySec=1s','/usr/bin/systemctl','suspend','--no-ask-password'],check=True)
+    print('accepted')

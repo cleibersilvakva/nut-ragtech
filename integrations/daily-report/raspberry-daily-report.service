@@ -1,0 +1,14 @@
+[Unit]
+Description=Daily Raspberry resource and software update report to Telegram
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=1d
+StartLimitBurst=6
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/ragtech-monitor/raspberry_daily_report.py
+TimeoutStartSec=5min
+Restart=on-failure
+RestartSec=30min
+UMask=0077

@@ -1,0 +1,15 @@
+[Unit]
+Description=Home Internet Speedtest API on Mac mini Ethernet
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/cleiber/Dev/home-internet-monitor
+ExecStart=/usr/bin/python3 /home/cleiber/Dev/home-internet-monitor/server.py
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

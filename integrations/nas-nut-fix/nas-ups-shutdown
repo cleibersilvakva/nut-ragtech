@@ -1,0 +1,16 @@
+#!/usr/bin/python3
+"""NUT shutdown action; journal/persistent evidence before normal system poweroff."""
+from pathlib import Path
+import json,os,subprocess,sys,time
+if os.geteuid()!=0:raise SystemExit('Requires root')
+if sys.argv[1:] not in ([],['--validation']):raise SystemExit('Unsupported arguments')
+origin='validation' if sys.argv[1:] else 'ups'
+path=Path('/var/lib/nas-nut-client');path.mkdir(mode=0o755,exist_ok=True)
+record={'origin':origin,'at':time.time(),'boot_id':Path('/proc/sys/kernel/random/boot_id').read_text().strip()}
+temp=path/'last-shutdown.tmp'
+with temp.open('w') as stream:
+    json.dump(record,stream);stream.flush();os.fsync(stream.fileno())
+temp.chmod(0o644);temp.replace(path/'last-shutdown.json')
+if origin=='validation':Path('/etc/sudoers.d/nas-nut-validation').unlink(missing_ok=True)
+subprocess.run(['/usr/bin/logger','-t','nas-ups-shutdown','Normal poweroff requested by '+origin],check=False)
+subprocess.run(['/usr/bin/systemctl','--no-block','poweroff'],check=True)

@@ -7,10 +7,14 @@ ONLINE e WOL sao tratados por ragtech_nut.py (sempre em execucao).
 Instalar em: /etc/nut/notifycmd.py
 Permissoes: chmod 750, chown root:nut
 """
+import json as _credentials_json
+import os as _credentials_os
+from pathlib import Path as _CredentialsPath
+_credentials = _credentials_json.loads(_CredentialsPath(_credentials_os.environ.get("RAGTECH_CREDENTIALS_FILE", "/etc/ragtech-monitor/credentials.json")).read_text())
 import sys, subprocess, urllib.request, urllib.parse, syslog
 
-BOT_TOKEN = "CHANGE_ME_TELEGRAM_BOT_TOKEN"
-CHAT_ID   = "CHANGE_ME_TELEGRAM_CHAT_ID"
+BOT_TOKEN = _credentials['bot_token']
+CHAT_ID = _credentials['chat_id']
 
 
 def get_battery():

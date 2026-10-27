@@ -1,0 +1,15 @@
+[Unit]
+Description=UPS controlled suspend and Wake-on-LAN for Mac mini
+After=network-online.target ragtech-monitor.service
+Wants=network-online.target ragtech-monitor.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/macmini-ups-power
+ExecStart=/usr/bin/python3 /opt/macmini-ups-power/daemon.py
+Restart=on-failure
+RestartSec=10
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

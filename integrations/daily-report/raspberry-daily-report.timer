@@ -1,0 +1,11 @@
+[Unit]
+Description=Raspberry daily report at 08:00 Brasilia time
+
+[Timer]
+OnCalendar=*-*-* 08:00:00 America/Sao_Paulo
+Persistent=true
+AccuracySec=1min
+Unit=raspberry-daily-report.service
+
+[Install]
+WantedBy=timers.target

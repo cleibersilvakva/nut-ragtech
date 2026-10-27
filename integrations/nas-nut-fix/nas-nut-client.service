@@ -1,0 +1,18 @@
+[Unit]
+Description=Dedicated NUT secondary shutdown protection for NAS
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=NUT_CONFPATH=/etc/nas-nut-client
+Environment=NUT_STATEPATH=/run/nas-nut-client
+Environment=NUT_ALTPIDPATH=/run/nas-nut-client
+ExecStartPre=/usr/bin/install -d -o nut -g nut -m 0770 /run/nas-nut-client
+ExecStart=/usr/lib/nut/upsmon -F -u nut
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
