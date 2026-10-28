@@ -72,3 +72,40 @@ Testes simulados não enviam mensagens, não mexem no nobreak e não executam sp
 Primeiro teste real acionado pelo Pi: 792.7 Mbps download, 564.7 Mbps upload,
 ping 3.004 ms, jitter 0.07 ms, servidor WIXX em Brasília, 27/10/2026 16:22:05 UTC.
 Essa amostra não é garantia de desempenho sustentado da operadora.
+
+### Telegram a cada hora
+
+`hourly_report.py` usa a última medição do Mac mini registrada pelo monitor
+(que continua medindo a cada 30 minutos). Horário apresentado em Brasília;
+medição com mais de 65 minutos ou falha é informada sem velocidade enganosa.
+Cron a cada cinco minutos permite nova tentativa de entrega, com trava de
+concorrência e estado por hora em data/hourly-telegram.json. Após confirmação
+da API Telegram, não envia novamente naquela hora. O resumo diário é mantido.
+
+Instalar como o usuário do monitor com `sh install-hourly-report.sh`, após copiar
+os arquivos e testes para uma pasta de staging no Pi. Credenciais vêm do config.py
+existente em /opt/internet-monitor; nunca incluí-lo no controle de versão.
+Testes: `python3 -B -m unittest test_hourly_report`.
+
+
+### Coleta horária e consolidado às 07:00 de Brasília
+
+`install-reports.py` configura SPEEDTEST_INTERVAL_S=3600, preserva o histórico,
+ativa relatórios horários e substitui o cron diário antigo. Executar como o
+usuário do serviço, a partir da pasta de staging, após a integração Mac mini
+existente. Requer hourly_report.py, daily_summary.py e seus testes no staging.
+Cria backup privado de config.py e crontab em data/backup-reports-*.
+Se necessário, reinicia somente o processo do monitor pertencente ao usuário
+por SIGKILL; a unidade existente Restart=on-failure o inicia novamente.
+
+O consolidado inclui todas as medições Mac mini do dia anterior em Brasília,
+com resumo de mínimo/média/máximo e valores por hora. A coleta usa intervalo
+mínimo de 3600 segundos entre testes (mais a duração do teste); não alinha os
+testes ao minuto zero. Falhas ficam registradas e não viram velocidade zero.
+Os avisos horários no Telegram continuam ativos. Ambos os envios usam cron a
+cada cinco minutos para retry; o diário só pode enviar a partir das 07:00 locais
+uma vez por dia. Se instalado depois das 07:00, entrega o consolidado pendente
+imediatamente. O envio das 7h depende da disponibilidade de internet/Telegram.
+O relatório diário de recursos do Raspberry continua independente.
+
+Testes: `python3 -B -m unittest test_hourly_report test_daily_summary`.
