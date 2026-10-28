@@ -5,10 +5,10 @@ from patch_pi import patched
 
 class PatchTests(unittest.TestCase):
     def test_current_production_patch(self):
-        source=Path('/opt/ragtech-monitor/ragtech_nut.py').read_text()
+        source=(Path(__file__).resolve().parents[2]/'scripts/ragtech_nut.py' if (Path(__file__).resolve().parents[2]/'scripts/ragtech_nut.py').exists() else Path('/opt/ragtech-monitor/ragtech_nut.py')).read_text()
         updated=patched(source);self.assertEqual(patched(updated),updated)
         before,after=ast.parse(source),ast.parse(updated)
-        changed={'main','power_restored_sequence','clear_fsd'}
+        changed={'main','power_restored_sequence','clear_fsd','send_wol'}
         for node in before.body:
             if isinstance(node,ast.FunctionDef) and node.name not in changed:
                 other=next(n for n in after.body if isinstance(n,ast.FunctionDef) and n.name==node.name)

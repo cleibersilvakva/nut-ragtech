@@ -98,6 +98,16 @@ def recover(read_sample,is_online,gateway_ok,clear_fsd,send_wol,notify,has_fsd,
             if check=='wake':
                 with LOCK:
                     state=read_state(path);state['wake_attempts']=policy.wake_attempts+1;save_state(state,path)
-                send_wol();policy.wake_attempts+=1;policy.last_wake=clock()
+                policy.wake_attempts+=1;policy.last_wake=clock()
+                try:
+                    send_wol()
+                except Exception as error:
+                    with LOCK:
+                        state=read_state(path)
+                        state['last_transport_error']=type(error).__name__
+                        save_state(state,path)
+                    notify('⚠️ Falha no envio WOL ao NAS; retorno não confirmado. Verifique Ethernet e permissões.')
+                    sleep(5)
+                    continue
                 notify('🔌 Condições seguras confirmadas; WOL enviado ao NAS. Aguardando resposta.')
         sleep(5)

@@ -174,10 +174,10 @@ def measure_connection() -> dict:
 
 
 def send_wol() -> None:
-    for _ in range(3):
-        subprocess.run(["wakeonlan", "-i", WOL_BROADCAST, NAS_MAC], capture_output=True)
-        time.sleep(2)
-    log.info("WOL enviado para %s via %s", NAS_MAC, WOL_BROADCAST)
+    from wol_transport import send_magic
+    receipt = send_magic(NAS_MAC, interface="eth0")
+    log.info("WOL aceito pela interface %s origem %s: %s pacotes para %s; aguardando NAS",
+             receipt["interface"], receipt["source"], receipt["packets"], NAS_MAC)
 
 
 def clear_fsd() -> bool:

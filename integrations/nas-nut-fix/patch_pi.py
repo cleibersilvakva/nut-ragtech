@@ -54,4 +54,5 @@ def patched(source):
     if anchor in source:
         source=source.replace(anchor,'    recovery_thread = threading.Thread(target=power_restored_sequence, daemon=True)\n    recovery_thread.start()',1)
     ast.parse(source)
-    return source
+    from patch_wol import patched as patch_wol
+    return patch_wol(source)

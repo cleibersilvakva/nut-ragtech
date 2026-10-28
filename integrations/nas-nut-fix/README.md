@@ -21,3 +21,26 @@ Para novas instalações usar install-nas.sh somente sem cliente dedicado ativo;
 para corrigir concorrência de validação, fix-validation.sh preserva produção.
 Backup Pi: /var/backups/nut-safe-recovery-1793129604. Backup NAS:
 /var/backups/nas-nut-client-1793129952. Falhas UGOS adicionais registradas no Brain.
+
+
+## WOL pela Ethernet — versão validada
+
+`wol_transport.py` vincula os três pacotes à eth0 e ao IPv4 da interface,
+verifica link e calcula o broadcast. Erros chegam ao controlador, que persiste
+falhas sem anunciar envio bem-sucedido e mantém no máximo três tentativas.
+Atualização de instalação existente: `sudo sh install-wol-fix.sh`, somente
+com UPS em OL, sem estado crítico; cria backup e reinicia ragtech-monitor.
+Instalações novas com install-pi.sh também incluem essa correção.
+
+Teste real de 27/10/2026 (horário de Brasília): desligamento normal manual,
+WOL pelo Raspberry e retorno na primeira tentativa em cerca de 67 segundos.
+Boot ID novo, cliente NUT, serviço WOL, SMB e /volume1 confirmados.
+Esse teste não incluiu corte de energia elétrica.
+
+`manual_wol_cycle.py` é um supervisor de teste explícito, não um serviço de boot:
+aguarda desligamento manual por até 15 minutos, exige energia OL e bateria ≥80%,
+aguarda pelo menos 180 segundos e tenta WOL até três vezes. As consultas de rede
+podem prolongar os intervalos. Registra resultado no diretório do script.
+Execute somente após preparar acesso de administração e acompanhar o teste.
+
+Testes: `python3 -B -m unittest test_recovery test_wol_transport test_patch_pi test_validation_guard`.

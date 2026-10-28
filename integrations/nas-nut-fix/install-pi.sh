@@ -2,7 +2,7 @@
 set -eu
 cd "$(dirname "$0")"
 [ "$(id -u)" = 0 ] || { echo 'Execute com sudo.'; exit 1; }
-python3 -B -m unittest -v test_recovery test_patch_pi
+python3 -B -m unittest -v test_recovery test_patch_pi test_wol_transport
 python3 -B - <<'PYINSTALL'
 from pathlib import Path
 import subprocess,time,shutil,ast
@@ -15,6 +15,8 @@ monitor=Path('/opt/ragtech-monitor/ragtech_nut.py')
 source=patched(monitor.read_text());ast.parse(source)
 for path in [monitor,Path('/etc/nut/upsmon.conf'),Path('/etc/systemd/system/nut-monitor.service.d/restart.conf')]:
     if path.exists():shutil.copy2(path,backup/path.name)
+shutil.copy2('wol_transport.py','/opt/ragtech-monitor/wol_transport.py')
+Path('/opt/ragtech-monitor/wol_transport.py').chmod(0o644)
 shutil.copy2('nas_recovery.py','/opt/ragtech-monitor/nas_recovery.py')
 Path('/opt/ragtech-monitor/nas_recovery.py').chmod(0o644)
 monitor.write_text(source)
