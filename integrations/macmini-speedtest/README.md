@@ -73,39 +73,34 @@ Primeiro teste real acionado pelo Pi: 792.7 Mbps download, 564.7 Mbps upload,
 ping 3.004 ms, jitter 0.07 ms, servidor WIXX em Brasília, 27/10/2026 16:22:05 UTC.
 Essa amostra não é garantia de desempenho sustentado da operadora.
 
-### Telegram a cada hora
 
-`hourly_report.py` usa a última medição do Mac mini registrada pelo monitor
-(que continua medindo a cada 30 minutos). Horário apresentado em Brasília;
-medição com mais de 65 minutos ou falha é informada sem velocidade enganosa.
-Cron a cada cinco minutos permite nova tentativa de entrega, com trava de
-concorrência e estado por hora em data/hourly-telegram.json. Após confirmação
-da API Telegram, não envia novamente naquela hora. O resumo diário é mantido.
+## Relatório gráfico diário — configuração atual
 
-Instalar como o usuário do monitor com `sh install-hourly-report.sh`, após copiar
-os arquivos e testes para uma pasta de staging no Pi. Credenciais vêm do config.py
-existente em /opt/internet-monitor; nunca incluí-lo no controle de versão.
-Testes: `python3 -B -m unittest test_hourly_report`.
+Coleta de velocidade continua a cada3600segundos no Mac mini, com histórico no
+Raspberry. Avisos horários e consolidado textual das07h foram desativados.
+Agora somente um gráfico diário às08:00America/Sao_Paulo cobre as24horas
+anteriores: [08hdo dia anterior,08hdo dia atual). O PNG contém download/upload e
+latência, com legenda de médias horárias. Caption contém mínimo/média/máximo,
+contagem de medições/falhas e horas sem dados válidos. Lacunas não viramzero.
 
+Instalação no Pi, como usuário do monitor, após configurar coleta3600s:
 
-### Coleta horária e consolidado às 07:00 de Brasília
+```sh
+python3 -m venv ~/.local/share/internet-report-venv
+~/.local/share/internet-report-venv/bin/python -m pip install -r requirements-reports.txt
+python3 -B install-chart-reports.py
+```
 
-`install-reports.py` configura SPEEDTEST_INTERVAL_S=3600, preserva o histórico,
-ativa relatórios horários e substitui o cron diário antigo. Executar como o
-usuário do serviço, a partir da pasta de staging, após a integração Mac mini
-existente. Requer hourly_report.py, daily_summary.py e seus testes no staging.
-Cria backup privado de config.py e crontab em data/backup-reports-*.
-Se necessário, reinicia somente o processo do monitor pertencente ao usuário
-por SIGKILL; a unidade existente Restart=on-failure o inicia novamente.
+Execute na pasta de staging com daily_chart.py,test_daily_chart.py e o instalador.
+Há backup do cron/código em data/backup-chart-*. O cron executa cada5min para
+retry. daily_chart.py permite envio somente a partir das08h, com lock e estado
+persistente em data/daily-chart-telegram.json. Uma entrega confirmada não se
+repete para o mesmo período. Em falha, pending_end mantém a janela mesmo após
+virada do dia; após recuperar uma pendência, próxima execução pode entregar a
+janela atual. Timeout ambíguo na API pode produzir duplicata, pois Telegram não
+oferece idempotência para sendPhoto. Sem internet às08h, envia quando recuperar.
+PNGs ficam em data/ por30dias. Não modifica UPS,NAS ou relatório de recursos.
 
-O consolidado inclui todas as medições Mac mini do dia anterior em Brasília,
-com resumo de mínimo/média/máximo e valores por hora. A coleta usa intervalo
-mínimo de 3600 segundos entre testes (mais a duração do teste); não alinha os
-testes ao minuto zero. Falhas ficam registradas e não viram velocidade zero.
-Os avisos horários no Telegram continuam ativos. Ambos os envios usam cron a
-cada cinco minutos para retry; o diário só pode enviar a partir das 07:00 locais
-uma vez por dia. Se instalado depois das 07:00, entrega o consolidado pendente
-imediatamente. O envio das 7h depende da disponibilidade de internet/Telegram.
-O relatório diário de recursos do Raspberry continua independente.
-
-Testes: `python3 -B -m unittest test_hourly_report test_daily_summary`.
+Testes: `~/.local/share/internet-report-venv/bin/python -B -m unittest test_daily_chart`.
+Instaladores anteriores install-reports.py e install-hourly-report.sh agora
+encaminham para o instalador atual para evitar reativar avisos horários.
